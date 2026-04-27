@@ -1,0 +1,417 @@
+#### ============================================================
+#### Working with Dewey Data in R
+#### Advan Neighborhood Patterns Plus — Reproducible Guide
+#### Dewey Data · 2026
+#### ============================================================
+## A practical supplement to Dewey's "Working with R" documentation.
+## Covers downloading, loading, exploring, and visualizing a
+## date-partitioned parquet dataset end-to-end.
+##
+## Demonstrated dataset: Advan Neighborhood Patterns Plus
+## Geographic coverage: US and Canada CBGs, monthly, 2019–present.
+##
+## Adapt download parameters, column selection, filters, and
+## visuals to any Dewey dataset and research question.
+#### ============================================================
+
+
+#### 0. INSTALL PACKAGES ####
+## Run once — comment out after first install.
+
+# install.packages("pak")
+# pak::pak("Dewey-Data/deweyr")
+# install.packages("arrow")
+# install.packages("duckdb")
+# install.packages("DBI")
+# install.packages("tidyverse")
+# install.packages("scales")
+# install.packages("lubridate")
+
+
+#### 1. LOAD LIBRARIES ####
+
+library(deweyr)
+library(arrow)
+library(DBI)
+library(duckdb)
+library(tidyverse)
+library(scales)
+library(lubridate)
+
+
+#### 2. CREDENTIALS & PATHS ####
+## Store your API key in ~/.Renviron:
+##   DEWEY_API_KEY=your-key-here
+## Open that file with: usethis::edit_r_environ()
+## Save it, then restart RStudio fully before loading.
+
+api_key       <- Sys.getenv("DEWEY_API_KEY")
+folder_id     <- "your-folder-id-here"
+
+## Use the full absolute path to the folder containing .parquet files.
+## Avoid '~' — DuckDB may not expand it correctly on all systems.
+## deweyr creates a subfolder during download; confirm your path with:
+##   list.files(download_path, pattern = "\\.parquet$")
+download_path <- "/absolute/path/to/your/parquet/files"
+
+
+#### ============================================================
+#### 3. DOWNLOAD — deweyr ARGUMENT DICTIONARY
+#### ============================================================
+## download_dewey() downloads files from a Dewey folder to your
+## local machine via UV. No manual Python setup required.
+##
+## ┌──────────────────────────┬────────────┬─────────────────────────────────────────────────┐
+## │ Argument                 │ Type       │ Description                                     │
+## ├──────────────────────────┼────────────┼─────────────────────────────────────────────────┤
+## │ api_key       [REQUIRED] │ character  │ Your Dewey API key.                             │
+## ├──────────────────────────┼────────────┼─────────────────────────────────────────────────┤
+## │ folder_id     [REQUIRED] │ character  │ Dewey folder ID or full API URL.                │
+## ├──────────────────────────┼────────────┼─────────────────────────────────────────────────┤
+## │ download_path            │ character  │ Local folder for files. Defaults to             │
+## │                          │            │ ./dewey-downloads in working directory.          │
+## ├──────────────────────────┼────────────┼─────────────────────────────────────────────────┤
+## │ python_version           │ character  │ Python version for UV. Default: "3.13".         │
+## │                          │            │ Do not set to "3.14" or higher — not            │
+## │                          │            │ compatible with deweypy.                        │
+## ├──────────────────────────┼────────────┼─────────────────────────────────────────────────┤
+## │ num_workers   [advanced] │ integer    │ Parallel download threads. Default: NULL        │
+## │                          │            │ (deweypy uses 8). Adjust only if needed.        │
+## ├──────────────────────────┼────────────┼─────────────────────────────────────────────────┤
+## │ partition_key_after      │ character  │ Download partitions on/after this date.         │
+## │               [advanced] │            │ Format: "YYYY-MM-DD".                           │
+## ├──────────────────────────┼────────────┼─────────────────────────────────────────────────┤
+## │ partition_key_before     │ character  │ Download partitions on/before this date.        │
+## │               [advanced] │            │ Combine with partition_key_after for a window.  │
+## └──────────────────────────┴────────────┴─────────────────────────────────────────────────┘
+##
+## First-time setup: if UV isn't installed, deweyr installs it
+## automatically. Restart RStudio fully after the first run to
+## ensure uvx is on your PATH before running again.
+
+
+#### 3a. DOWNLOAD EXAMPLES ####
+
+## Basic download
+download_dewey(
+  api_key   = api_key,
+  folder_id = folder_id
+)
+
+## Date-partitioned download — recommended for monthly datasets
+download_dewey(
+  api_key              = api_key,
+  folder_id            = folder_id,
+  download_path        = download_path,
+  partition_key_after  = "2025-01-01",
+  partition_key_before = "2026-01-01"
+)
+
+## Download from a full Dewey URL instead of folder ID
+download_dewey(
+  api_key   = api_key,
+  folder_id = "https://api.deweydata.io/api/v1/external/data/abc123"
+)
+
+
+#### ============================================================
+#### 4. LOAD DATA
+#### ============================================================
+## deweyr includes a built-in DuckDB wrapper — preview_dewey_duck(),
+## download_dewey_duck(), and read_dewey_duck() — that handles
+## schema inspection, filtering, and reading without writing raw SQL.
+## This is the recommended path for most users.
+## Many Dewey datasets are delivered as .parquet files; we recommend
+## working with parquet when available.
+
+
+#### 4a. Preview schema — no download required ####
+## Use preview_dewey_duck() to inspect column names and types
+## before deciding what to filter and select.
+## Pass limit = 0 to return only column names with no data transferred.
+
+api_key <- Sys.getenv("DEWEY_API_KEY")
+data_id <- "your-data-id-here"
+
+## Column names only — fastest way to orient to a new dataset
+colnames(preview_dewey_duck(api_key, data_id, limit = 0))
+
+## First 10 rows
+preview_dewey_duck(api_key, data_id)
+
+## Filtered preview
+preview_dewey_duck(api_key, data_id, where = "REGION = 'XX'")
+
+
+#### 4b. Download, filter, and read — deweyr wrapper (recommended) ####
+## download_dewey_duck() downloads with a WHERE filter and column
+## selection applied — only matching data lands on disk.
+## Pipe directly into read_dewey_duck() to load into R.
+##
+## The where argument accepts standard SQL syntax.
+## The select argument accepts column names, indices, or ranges.
+## The partition column is always included automatically.
+
+data <- download_dewey_duck(
+  api_key   = api_key,
+  data_id   = data_id,
+  partition = "DATE_RANGE_START",        # adjust to your dataset's partition column
+  where     = "DATE_RANGE_START >= '2024-01-01' AND DATE_RANGE_START < '2025-01-01'",
+  select    = c("AREA", "AREA_TYPE", "REGION", "YEAR", "MONTH",
+                "DATE_RANGE_START", "DATE_RANGE_END",
+                "STOP_COUNTS", "DEVICE_COUNTS", "MEDIAN_DWELL",
+                "DAY_COUNTS", "STOPS_BY_DAY", "TOP_SAME_MONTH_BRAND")
+) |>
+  read_dewey_duck()
+
+## Confirm what you loaded
+nrow(data)
+object.size(data) |> format(units = "MB")
+glimpse(data)
+
+
+#### 4c. Read a previously downloaded dataset ####
+## If data is already on disk from a prior download_dewey_duck() call,
+## read it back directly. Supports WHERE filtering on read.
+
+# data <- read_dewey_duck(download_path)
+# data <- read_dewey_duck(download_path, where = "REGION = 'XX'")
+
+
+#### 4d. Raw DuckDB — alternative for advanced queries ####
+## For window functions, aggregations, or complex SQL, connect
+## directly via DuckDB. Use absolute paths — avoid '~' as DuckDB
+## may not expand it correctly on all systems.
+
+# library(DBI); library(duckdb)
+# con  <- dbConnect(duckdb(), dbdir = ":memory:")
+# data <- dbGetQuery(con, paste0(
+#   "SELECT AREA, AREA_TYPE, REGION, YEAR, MONTH,
+#            DATE_RANGE_START, DATE_RANGE_END,
+#            STOP_COUNTS, DEVICE_COUNTS, MEDIAN_DWELL,
+#            DAY_COUNTS, STOPS_BY_DAY, TOP_SAME_MONTH_BRAND
+#    FROM read_parquet('", download_path, "/*.parquet')
+#    WHERE DATE_RANGE_START >= '2024-01-01'
+#      AND DATE_RANGE_START <  '2025-01-01'"
+# ))
+# dbDisconnect(con, shutdown = TRUE)
+
+
+#### ============================================================
+#### KEY COLUMNS — ADVAN NEIGHBORHOOD PATTERNS PLUS
+##
+## AREA               CBG FIPS code (12-digit). substr(AREA, 1, 5)
+##                    gives county FIPS.
+## AREA_TYPE          Neighborhood classification (e.g., residential,
+##                    commercial). Useful for faceting visuals.
+## REGION             State abbreviation (e.g., "CA", "TX").
+## YEAR / MONTH       Pre-parsed date components — use instead of
+##                    extracting from DATE_RANGE_START.
+## DATE_RANGE_START   Start of the monthly observation period.
+## STOP_COUNTS        Raw stops recorded (min. 1 min duration).
+## DEVICE_COUNTS      Unique devices observed in the CBG.
+## MEDIAN_DWELL       Median dwell time per stop (minutes).
+## DAY_COUNTS         Device-days: one device present 3 days = 3.
+## STOPS_BY_DAY       Array of daily stop counts, Sun–Sat.
+##                    Format: "[120, 98, 105, 88, 142, 200, 180]"
+## TOP_SAME_MONTH_BRAND  Most common POI brand visited by devices
+##                    that also stopped in this CBG that month.
+##
+## Note: column names are all uppercase in this dataset.
+## Always confirm with names(preview) on a new dataset.
+#### ============================================================
+
+
+#### 5. EXPLORE ####
+
+dim(data)
+summary(data)
+colSums(is.na(data))
+range(data$DATE_RANGE_START, na.rm = TRUE)
+n_distinct(data$AREA)
+
+
+#### 6. CLEAN & PREPARE ####
+
+data_clean <- data |>
+  mutate(
+    DATE_RANGE_START = as_date(DATE_RANGE_START),
+    DATE_RANGE_END   = as_date(DATE_RANGE_END),
+    year_month       = floor_date(DATE_RANGE_START, "month"),
+    county_fips      = substr(AREA, 1, 5)
+  ) |>
+  filter(!is.na(STOP_COUNTS), STOP_COUNTS > 0)
+
+glimpse(data_clean)
+
+
+#### ============================================================
+#### 7. VISUALIZATIONS
+#### ============================================================
+
+
+## ── PLOT 1: Top Brands by Co-Visit Score ──────────────────────
+## TOP_SAME_MONTH_BRAND is a JSON object per CBG-month where each
+## key is a brand name and each value is a relative co-visit score:
+##   {"Starbucks": 22, "Target": 50, "Mall": 100, ...}
+## We parse the JSON across all rows, then sum scores per brand
+## to surface which brands have the broadest neighborhood presence.
+## install.packages("jsonlite") if not already installed.
+
+library(jsonlite)
+
+brand_parsed <- data_clean |>
+  filter(!is.na(TOP_SAME_MONTH_BRAND),
+         TOP_SAME_MONTH_BRAND != "",
+         TOP_SAME_MONTH_BRAND != "{}") |>
+  mutate(row_id = row_number()) |>
+  rowwise() |>
+  mutate(brands = list(
+    tryCatch(
+      as.data.frame(t(unlist(fromJSON(TOP_SAME_MONTH_BRAND)))),
+      error = function(e) NULL
+    )
+  )) |>
+  ungroup() |>
+  filter(!sapply(brands, is.null)) |>
+  select(row_id, brands) |>
+  unnest(brands) |>
+  pivot_longer(-row_id, names_to = "brand", values_to = "score") |>
+  mutate(score = as.numeric(score)) |>
+  filter(!is.na(score))
+
+brand_summary <- brand_parsed |>
+  group_by(brand) |>
+  summarise(total_score = sum(score, na.rm = TRUE), .groups = "drop") |>
+  slice_max(total_score, n = 15)
+
+plot1 <- ggplot(brand_summary,
+                aes(x = reorder(brand, total_score), y = total_score)) +
+  geom_col(fill = "#c8572a", alpha = 0.85, width = 0.7) +
+  coord_flip() +
+  scale_y_continuous(labels = label_comma()) +
+  labs(
+    title    = "Top 15 Brands by Co-Visit Score — [Your Region], [Year]",
+    subtitle = "Sum of same-month co-visit scores across all CBGs\nAdvan Neighborhood Patterns Plus via Dewey",
+    x        = NULL,
+    y        = "Total co-visit score",
+    caption  = "Source: Advan Research / Dewey Data"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title         = element_text(face = "bold"),
+    plot.subtitle      = element_text(color = "grey50", size = 10),
+    panel.grid.major.y = element_blank()
+  )
+
+print(plot1)
+# ggsave("plot1_top_brands.png", plot1, width = 8, height = 6, dpi = 150)
+
+
+## ── Optional: facet Plot 1 by AREA_TYPE ───────────────────────
+## Shows whether top brands differ across neighborhood types.
+
+# brand_by_area <- data_clean |>
+#   filter(!is.na(TOP_SAME_MONTH_BRAND),
+#          TOP_SAME_MONTH_BRAND != "",
+#          TOP_SAME_MONTH_BRAND != "{}",
+#          !is.na(AREA_TYPE)) |>
+#   mutate(row_id = row_number()) |>
+#   rowwise() |>
+#   mutate(brands = list(
+#     tryCatch(as.data.frame(t(unlist(fromJSON(TOP_SAME_MONTH_BRAND)))),
+#              error = function(e) NULL)
+#   )) |>
+#   ungroup() |>
+#   filter(!sapply(brands, is.null)) |>
+#   select(row_id, AREA_TYPE, brands) |>
+#   unnest(brands) |>
+#   pivot_longer(c(-row_id, -AREA_TYPE), names_to = "brand", values_to = "score") |>
+#   mutate(score = as.numeric(score)) |>
+#   filter(!is.na(score)) |>
+#   group_by(AREA_TYPE, brand) |>
+#   summarise(total_score = sum(score, na.rm = TRUE), .groups = "drop") |>
+#   group_by(AREA_TYPE) |>
+#   slice_max(total_score, n = 5) |>
+#   ungroup()
+#
+# ggplot(brand_by_area,
+#        aes(x = reorder(brand, total_score), y = total_score)) +
+#   geom_col(fill = "#c8572a", alpha = 0.85, width = 0.7) +
+#   coord_flip() +
+#   facet_wrap(~AREA_TYPE, scales = "free") +
+#   scale_y_continuous(labels = label_comma()) +
+#   labs(title = "Top Brands by Area Type — [Your Region], [Year]",
+#        x = NULL, y = "Total co-visit score",
+#        caption = "Source: Advan Research / Dewey Data") +
+#   theme_minimal(base_size = 12) +
+#   theme(panel.grid.major.y = element_blank())
+
+
+## ── PLOT 2: Daily Activity Pattern ────────────────────────────
+## STOPS_BY_DAY contains one value per calendar day of the month
+## (up to 31 values), not one per day-of-week.
+## Format: "[0, 326, 652, ...]"
+##
+## We parse all day values, assign day numbers (1–31), and average
+## across all CBGs to show a typical daily activity profile.
+## Update ref_date to the first day of your data's month so that
+## the x-axis labels show the correct dates.
+
+ref_date <- as_date("2024-01-01")   # set to first day of your data month
+
+stops_daily <- data_clean |>
+  filter(!is.na(STOPS_BY_DAY), STOPS_BY_DAY != "") |>
+  mutate(parsed = str_remove_all(STOPS_BY_DAY, "\\[|\\]")) |>
+  separate(parsed,
+           into    = paste0("calday_", 1:31),
+           sep     = ",",
+           convert = TRUE,
+           fill    = "right") |>
+  summarise(across(starts_with("calday_"), ~mean(.x, na.rm = TRUE))) |>
+  pivot_longer(everything(), names_to = "day_key", values_to = "avg_stops") |>
+  mutate(
+    day_num = as.integer(str_remove(day_key, "calday_")),
+    date    = ref_date + days(day_num - 1)
+  ) |>
+  filter(day_num <= 31, !is.na(avg_stops))
+
+plot2 <- ggplot(stops_daily, aes(x = day_num, y = avg_stops)) +
+  geom_col(fill = "#4a7c8a", alpha = 0.85, width = 0.8) +
+  scale_x_continuous(
+    breaks = seq(1, 31, by = 7),
+    labels = format(ref_date + days(seq(0, 30, by = 7)), "%b %d")
+  ) +
+  scale_y_continuous(labels = label_comma()) +
+  labs(
+    title    = "Average Daily Stops per CBG — [Your Region], [Month Year]",
+    subtitle = "Mean stops per census block group by calendar day\nAdvan Neighborhood Patterns Plus via Dewey",
+    x        = NULL,
+    y        = "Avg stops per CBG",
+    caption  = "Source: Advan Research / Dewey Data"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title         = element_text(face = "bold"),
+    plot.subtitle      = element_text(color = "grey50"),
+    panel.grid.major.x = element_blank()
+  )
+
+print(plot2)
+# ggsave("plot2_daily_stops.png", plot2, width = 9, height = 5, dpi = 150)
+
+
+#### ============================================================
+#### RESOURCES
+#### ============================================================
+## Advan Neighborhood Patterns Plus:
+##   https://docs.deweydata.io/docs/neighborhood-patterns-plus
+## Advan FAQ (field definitions, methodology):
+##   https://docs.deweydata.io/docs/faqs-advan-research
+## SafeGraph vs. Advan methodology differences:
+##   https://docs.deweydata.io/docs/methodolgy-difference-from-safegraph-patterns
+## Working with R — Dewey documentation:
+##   https://docs.deweydata.io/docs/working-with-r-new
+## deweyr package on GitHub:
+##   https://github.com/Dewey-Data/deweyr
+#### ============================================================
