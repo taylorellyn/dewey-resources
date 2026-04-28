@@ -411,7 +411,7 @@ print(plot2)
 ## SafeGraph vs. Advan methodology differences:
 ##   https://docs.deweydata.io/docs/methodolgy-difference-from-safegraph-patterns
 ## Working with R — Dewey documentation:
-##   https://docs.deweydata.io/docs/working-with-r-new
+##   https://docs.deweydata.io/docs/working-with-r
 ## deweyr package on GitHub:
-##   https://github.com/Dewey-Data/deweyr
+##   https://github.com/taylorellyn/dewey-resources/blob/256756e54bf6004abfaf5f1147f89a18edcf4486/deweyr_supp
 #### ============================================================
