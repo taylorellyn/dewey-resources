@@ -19,7 +19,7 @@ def _():
 @app.cell
 def _(Path):
     # ====== EDIT THIS if your folder ever moves ======
-    DATA_DIR = Path("/Users/taylorbutler/Documents/dewey-downloads/capology")
+    DATA_DIR = Path("YOUR_PATH")
     SALARY_GLOB = "salaries_premierleague*.csv"
     FIN_GLOB    = "clubfinancials_premierleague*.csv"
 
@@ -157,11 +157,7 @@ def _(DATA_DIR, FIN_GLOB, SALARY_GLOB, glob, mo, pd):
 
 @app.cell
 def _(NEEDED_ITEMS, fin_raw, pd, sal_raw):
-    # ------------------------------------------------------------------
-    # Shared helpers.  Raw-data column names are UPPERCASE (as exported).
-    # Computed / derived columns we create ourselves stay lowercase.
-    # ------------------------------------------------------------------
-
+   
     def make_fin_wide(currency: str) -> pd.DataFrame:
         col = f"VALUE_{currency.upper()}"
         sub = fin_raw[fin_raw["ITEM_ID"].isin(NEEDED_ITEMS)][
@@ -698,7 +694,6 @@ def _(mo):
     ---
     **Notes & assumptions**
     - **Join key:** `CLUB_ID` + year (`SEASON_ID` ↔ `YEAR_ID`, both season-end year).
-      If the coverage matrix shows a systematic one-column offset, shift one side by 1 in `squad_agg`.
     - **`ADJUSTED_*` = inflation-adjusted (real) money**, inferred from the multiplier pattern
       in the data (rises ~3.5% per year going back). Verify via Dewey docs if needed.
     - **Cross-dataset ratios use nominal salaries** to match nominal financials.
